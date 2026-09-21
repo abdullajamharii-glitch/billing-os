@@ -1,0 +1,61 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-display: 'Outfit', system-ui, -apple-system, sans-serif;
+
+  /* Brand color palette — matches POS design */
+  --color-brand: #e05c2b;
+  --color-brand-light: #fdf2ed;
+  --color-brand-dark: #b83c14;
+
+  /* Layout colors */
+  --color-sidebar: #f9f9f8;
+  --color-panel: #ffffff;
+  --color-bg-base: #f5f5f4;
+  --color-border-light: #e7e7e6;
+
+  /* Statuses */
+  --color-status-ok: #15803d;
+  --color-status-ok-bg: #f0fdf4;
+  --color-status-warn: #d97706;
+  --color-status-warn-bg: #fef3c7;
+  --color-status-danger: #b91c1c;
+  --color-status-danger-bg: #fef2f2;
+}
+
+:root {
+  --background: #f5f5f4;
+  --foreground: #1c1917;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
+}
+
+/* Print styles */
+@media print {
+  html, body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  .invoice-print-area {
+    width: 210mm;
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    margin: 0 auto;
+    padding: 10mm;
+  }
+}

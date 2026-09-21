@@ -1,0 +1,399 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  ACCOUNTANT
+  CASHIER
+  VIEWER
+}
+
+enum PaymentMethod {
+  CASH
+  UPI
+  CARD
+  SPLIT
+  OTHER
+}
+
+enum SaleStatus {
+  COMPLETED
+  HELD
+  REFUNDED
+  CANCELLED
+}
+
+enum StockEntryType {
+  PURCHASE    // Stock received from supplier / purchase
+  ADJUSTMENT  // Manual stock correction (positive or negative)
+  SALE_DEDUCT // Auto-deducted when a sale is completed
+  RETURN      // Customer return (stock added back)
+  DAMAGE      // Damaged / expired write-off (stock removed)
+  OPENING     // Opening / initial stock count
+}
+
+// -------------------------------------------------------------
+// 1. Organization & Shop Profile
+// -------------------------------------------------------------
+model Organization {
+  id              String   @id @default(cuid())
+  name            String   // Shop name e.g. "Ameen Supermarket & Department Store"
+  phone           String?
+  email           String?
+  gstin           String?  // GST Number
+  currency        String   @default("INR")
+  address         Json?    // { line1, city, state, pincode }
+  bankDetails     Json?    // { bankName, upiId, qrCodeUrl, accountNumber, ifsc }
+  receiptHeader   String?  // Text at top of thermal receipt
+  receiptFooter   String?  @default("Thank you for shopping with us! Visit again.")
+  paperSize       String   @default("80mm") // 80mm | 58mm | A4
+  razorpayConfig  Json?    // { isEnabled, keyId, keySecret, webhookSecret, testMode }
+  printerConfig   Json?    // { printerType, ipAddress, port, paperWidth, autoCut, openCashDrawer }
+  messagingConfig Json?    // { provider, metaPhoneId, metaToken, gupshupApiKey, autoSendBill }
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  users           User[]
+  categories      Category[]
+  products        Product[]
+  sales           Sale[]
+  customers       Customer[]
+  auditLogs       AuditLog[]
+  loyaltyConfig   LoyaltyConfig?
+  stockEntries    StockEntry[]
+  recipeItems     RecipeItem[]
+
+  @@map("organizations")
+}
+
+model User {
+  id           String    @id @default(cuid())
+  orgId        String
+  name         String
+  email        String
+  passwordHash String
+  role         Role      @default(CASHIER)
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  org           Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  sales         Sale[]
+  auditLogs     AuditLog[]
+  refreshTokens RefreshToken[]
+  stockEntries  StockEntry[]
+
+  @@unique([orgId, email])
+  @@index([orgId])
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+// -------------------------------------------------------------
+// 2. Categories & Products / Inventory
+// -------------------------------------------------------------
+model Category {
+  id        String    @id @default(cuid())
+  orgId     String
+  name      String    // e.g. "Beverages", "Snacks", "Dairy", "Grains", "Bakery"
+  color     String?   @default("#e05c2b")
+  icon      String?
+  sortOrder Int       @default(0)
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  products Product[]
+
+  @@unique([orgId, name])
+  @@index([orgId])
+  @@map("categories")
+}
+
+model Product {
+  id          String   @id @default(cuid())
+  orgId       String
+  categoryId  String?
+  name        String
+  barcode     String?  // Scannable barcode or EAN/UPC
+  sku         String?  // SKU code
+  description String?
+  price       Int      // Selling Price in paise (e.g. ₹50.00 = 5000)
+  costPrice   Int      @default(0) // Purchase / Wholesale Cost in paise (e.g. ₹35.00 = 3500)
+  stock       Float    @default(0) // Inventory stock count (e.g. 50 pcs or 12.5 kg)
+  minStock    Float    @default(5) // Low stock trigger
+  unit        String   @default("pcs") // pcs, kg, g, ltr, ml, box, pkt
+  taxRate     Int      @default(0) // GST Rate in basis points (e.g. 1800 = 18%, 500 = 5%, 0 = 0%)
+  hsnCode     String?  @default("996331") // HSN or SAC code (e.g. 996331 for restaurant food services)
+  imageUrl    String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  category  Category?    @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  saleItems    SaleItem[]
+  stockEntries StockEntry[]
+  recipesAsProduct    RecipeItem[] @relation("ProductRecipes")
+  recipesAsIngredient RecipeItem[] @relation("ProductIngredients")
+
+  @@unique([orgId, barcode])
+  @@index([orgId, categoryId])
+  @@index([orgId, name])
+  @@index([orgId, barcode])
+  @@map("products")
+}
+
+// -------------------------------------------------------------
+// 3. Customers
+// -------------------------------------------------------------
+model Customer {
+  id             String   @id @default(cuid())
+  orgId          String
+  name           String
+  phone          String?
+  email          String?
+  gstin          String?
+  address        String?
+  loyaltyPoints  Int      @default(0)
+  balanceDue     Int      @default(0) // in paise (for customer credit / khata)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  org   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  sales Sale[]
+  loyaltyTransactions LoyaltyTransaction[]
+
+  @@index([orgId])
+  @@index([orgId, phone])
+  @@map("customers")
+}
+
+// -------------------------------------------------------------
+// 4. Sales / POS Bills & Receipts
+// -------------------------------------------------------------
+model SaleSequence {
+  id      String @id @default(cuid())
+  orgId   String @unique
+  year    Int
+  lastNum Int    @default(0)
+
+  @@map("sale_sequences")
+}
+
+model Sale {
+  id             String        @id @default(cuid())
+  orgId          String
+  userId         String?       // Cashier who processed the bill
+  customerId     String?
+  billNumber     String        // e.g. "BILL-2026-0001"
+  status         SaleStatus    @default(COMPLETED)
+  customerName   String?       @default("Walk-in Customer")
+  customerPhone  String?
+
+  subtotal       Int           // in paise (Sum of items before tax & discount)
+  taxTotal       Int           @default(0) // in paise (Total GST collected)
+  cgstTotal      Int           @default(0) // in paise (Central GST)
+  sgstTotal      Int           @default(0) // in paise (State GST)
+  igstTotal      Int           @default(0) // in paise (Integrated GST)
+  discountTotal  Int           @default(0) // in paise (Flat or percentage discount)
+  total          Int           // in paise (Final Grand Total Payable)
+  costTotal      Int           @default(0) // in paise (Sum of cost prices for margin & profit calculation)
+
+  paymentMethod  PaymentMethod @default(CASH)
+  cashReceived   Int           @default(0) // in paise
+  changeReturned Int           @default(0) // in paise
+  paymentRef     String?       // e.g. UPI txn id or Card auth code
+  razorpayOrderId   String?    // Razorpay Order ID (e.g. order_xxx)
+  razorpayPaymentId String?    // Razorpay Payment ID (e.g. pay_xxx)
+  notes          String?
+  pointsEarned   Int           @default(0) // Loyalty points earned from this sale
+  pointsRedeemed Int           @default(0) // Loyalty points redeemed as discount
+
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user      User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  customer  Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  items     SaleItem[]
+  loyaltyTransactions LoyaltyTransaction[]
+
+  @@unique([orgId, billNumber])
+  @@index([orgId, createdAt])
+  @@index([orgId, status])
+  @@index([orgId, paymentMethod])
+  @@map("sales")
+}
+
+model SaleItem {
+  id          String   @id @default(cuid())
+  saleId      String
+  productId   String?
+  productName String
+  barcode     String?
+  hsnCode     String?  @default("996331")
+  unit        String   @default("pcs")
+  quantity    Float    @default(1)
+  unitPrice   Int      // in paise (Selling price per unit at sale time)
+  costPrice   Int      @default(0) // in paise (Cost price per unit for profit calculation)
+  taxRate     Int      @default(0) // in basis points (e.g. 500 = 5%)
+  taxAmount   Int      @default(0) // in paise
+  discount    Int      @default(0) // in paise
+  lineTotal   Int      // in paise (quantity * unitPrice + taxAmount - discount)
+  createdAt   DateTime @default(now())
+
+  sale    Sale     @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([saleId])
+  @@index([productId])
+  @@map("sale_items")
+}
+
+// -------------------------------------------------------------
+// 5. Audit Log
+// -------------------------------------------------------------
+model AuditLog {
+  id          String   @id @default(cuid())
+  orgId       String
+  actorUserId String?
+  entity      String
+  entityId    String
+  action      String
+  before      Json?
+  after       Json?
+  createdAt   DateTime @default(now())
+
+  org   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  actor User?        @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, entity, entityId])
+  @@index([orgId, createdAt])
+  @@map("audit_logs")
+}
+
+// -------------------------------------------------------------
+// 6. Loyalty Programme
+// -------------------------------------------------------------
+model LoyaltyConfig {
+  id                  String   @id @default(cuid())
+  orgId               String   @unique
+  isEnabled           Boolean  @default(true)
+  pointsPerHundred    Int      @default(1)   // Points earned per ₹100 spent (e.g. 1 = 1 pt per ₹100)
+  pointValuePaise     Int      @default(50)  // Value of 1 point in paise (e.g. 50 = ₹0.50)
+  minPointsRedeem     Int      @default(50)  // Minimum points required to redeem
+  expiryDays          Int      @default(0)   // 0 = no expiry
+  // Tier thresholds (points needed to reach tier)
+  bronzeThreshold     Int      @default(0)
+  silverThreshold     Int      @default(500)
+  goldThreshold       Int      @default(2000)
+  platinumThreshold   Int      @default(5000)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@map("loyalty_configs")
+}
+
+enum LoyaltyTxnType {
+  EARN
+  REDEEM
+  ADJUST
+  EXPIRE
+}
+
+model LoyaltyTransaction {
+  id         String         @id @default(cuid())
+  orgId      String
+  customerId String
+  saleId     String?
+  type       LoyaltyTxnType
+  points     Int            // positive = earned, negative = redeemed/expired
+  balanceAfter Int          // snapshot of balance after this txn
+  note       String?
+  createdAt  DateTime       @default(now())
+
+  customer Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  sale     Sale?         @relation(fields: [saleId], references: [id], onDelete: SetNull)
+
+  @@index([customerId, createdAt])
+  @@index([orgId, createdAt])
+  @@map("loyalty_transactions")
+}
+
+// -------------------------------------------------------------
+// 7. Inventory Stock Entries (Purchase / Adjustment / Ledger)
+// -------------------------------------------------------------
+model StockEntry {
+  id              String         @id @default(cuid())
+  orgId           String
+  productId       String
+  type            StockEntryType
+  qty             Float          // positive = stock in, negative = stock out
+  balanceAfter    Float          // snapshot of product.stock after this entry
+  note            String?        // e.g. "Purchased from supplier XYZ", "Damaged batch"
+  costPricePaise  Int            @default(0) // unit cost for PURCHASE entries (in paise)
+  supplierName    String?        // optional supplier name for PURCHASE entries
+  referenceNo     String?        // optional invoice / challan / PO number
+  createdByUserId String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  product   Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdBy User?        @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, createdAt])
+  @@index([orgId, productId])
+  @@index([productId, createdAt])
+  @@map("stock_entries")
+}
+
+// -------------------------------------------------------------
+// 12. Recipe / Bill of Materials (BOM)
+// -------------------------------------------------------------
+model RecipeItem {
+  id           String   @id @default(cuid())
+  orgId        String
+  productId    String   // The menu item being sold (e.g. Double Patty Burger)
+  ingredientId String   // The raw ingredient consumed (e.g. Burger Bun, Patty, Cheese)
+  quantity     Float    // Amount needed per 1 unit of product (e.g. 1.0 bun, 0.05 kg mayo)
+  unit         String   @default("pcs")
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  org        Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  product    Product      @relation("ProductRecipes", fields: [productId], references: [id], onDelete: Cascade)
+  ingredient Product      @relation("ProductIngredients", fields: [ingredientId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, ingredientId])
+  @@index([orgId, productId])
+  @@index([orgId, ingredientId])
+  @@map("recipe_items")
+}
+
