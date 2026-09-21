@@ -5,11 +5,13 @@
  *  - bcryptjs (uses process.nextTick / setImmediate)
  *  - @prisma/client (Node.js only)
  *  - next/headers (not available in Edge Runtime)
- *  - jose webapi entry (uses CompressionStream / DecompressionStream)
+ *  - from 'jose' directly — the barrel export pulls in jose/dist/webapi/index.js
+ *    which re-exports JWE decrypt → jwe_decrypt.js → deflate.js → CompressionStream
  *
- * jose's default export (from 'jose') is Edge/Web-compatible.
+ * ✅ Safe: import from the specific subpath 'jose/jwt/verify'
+ *    This loads ONLY the JWT verification code, no JWE, no CompressionStream.
  */
-import { jwtVerify } from 'jose';
+import { jwtVerify } from 'jose/jwt/verify';
 import type { Role } from '@prisma/client';
 
 export interface JwtPayload {
